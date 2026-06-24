@@ -1,0 +1,4 @@
+gradio>=5.0.0
+pillow>=10.0.0
+imageio[pyav]>=2.30.0
+numpy>=1.24.0

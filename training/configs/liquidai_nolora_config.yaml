@@ -1,0 +1,68 @@
+# =============================================================================
+# Duck Hunt GRPO Training — LiquidAI LFM2.5-VL-1.6B (Full Fine-Tune, No LoRA)
+# =============================================================================
+# Full parameter fine-tuning. Needs ~6-8GB VRAM in BF16.
+# Use this when you want maximum expressiveness and have the VRAM.
+#
+# Usage:
+#   python train_liquidai.py --config configs/liquidai_nolora_config.yaml
+
+model:
+  model_name: "LiquidAI/LFM2.5-VL-1.6B"
+  torch_dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  trust_remote_code: true
+  device_map: "auto"
+  quantization: null
+
+lora:
+  enabled: false
+
+grpo:
+  num_generations: 4                       # fewer gens to save VRAM (all params trainable)
+  max_completion_length: 128
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 0
+  beta: 0.0
+  num_iterations: 1
+  epsilon: 0.2
+  loss_type: "grpo"
+  scale_rewards: "group"
+  entropy_coeff: 0.01
+  use_vllm: false
+
+training:
+  output_dir: "./outputs/lfm25_duckhunt_grpo_full"
+  num_train_epochs: 3
+  max_steps: -1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 5.0e-6                    # lower LR for full fine-tune
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  lr_scheduler_type: "cosine"
+  max_grad_norm: 1.0
+  bf16: true
+  fp16: false
+  logging_steps: 1
+  save_steps: 100
+  save_total_limit: 2
+  eval_strategy: "no"
+  eval_steps: 100
+  seed: 42
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+
+environment:
+  latency_options_ms: [100, 150, 200, 250, 300]
+  frames_per_observation: 4
+  frames_per_observation_min: 2
+  frames_per_observation_max: 10
+
+logging:
+  wandb_project: "duckhunt-grpo"
+  wandb_run_name: "lfm25-vl-1.6b-grpo-full"
+  report_to: "wandb"
+  log_completions: true
+  num_completions_to_print: 5

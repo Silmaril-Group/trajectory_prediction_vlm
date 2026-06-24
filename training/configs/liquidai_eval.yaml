@@ -1,0 +1,83 @@
+# =============================================================================
+# Duck Hunt Pre/Post-Training Evaluation — LiquidAI VLMs
+# =============================================================================
+# Queries a VLM served via vLLM or SGLang (OpenAI-compatible API).
+# Measures: tool calling, processing time per frame count, horizon analysis,
+# hit rate with actual processing latency.
+#
+# Usage:
+#   # 1. Start the model server
+#   ./serve_vlm.sh --model LiquidAI/LFM2.5-VL-1.6B
+#
+#   # 2. Run evaluation
+#   python eval_vlm.py --config configs/liquidai_eval.yaml
+#   python eval_vlm.py --config configs/liquidai_eval.yaml --weave
+#   python eval_vlm.py --config configs/liquidai_eval.yaml --api-base http://localhost:8000/v1
+
+models:
+  - model_id: "LiquidAI/LFM2.5-VL-1.6B"
+    model_class: "AutoModelForImageTextToText"
+    processor_class: "AutoProcessor"
+    tool_call_format: "liquidai"       # <|tool_call_start|>[func()]<|tool_call_end|>
+    max_image_tokens: 256              # per image
+    min_image_tokens: 64               # per image
+    context_length: 32768
+    native_tile_size: 512              # SigLIP2 NaFlex tile
+    preferred_aspect_ratios:           # w:h ratios the model handles well
+      - [1, 1]                         # 512x512 — native tile, no waste
+      - [16, 10]                       # 800x500 — game native, slight padding
+      - [4, 3]                         # 640x480 — classic
+    dtype: "bfloat16"
+    quantization: null
+    generation:
+      temperature: 0.1
+      min_p: 0.15
+      repetition_penalty: 1.05
+      max_new_tokens: 256
+
+  - model_id: "LiquidAI/LFM2-VL-450M"
+    model_class: "AutoModelForImageTextToText"
+    processor_class: "AutoProcessor"
+    tool_call_format: "liquidai"
+    max_image_tokens: 256
+    min_image_tokens: 64
+    context_length: 32768
+    native_tile_size: 512
+    preferred_aspect_ratios:
+      - [1, 1]
+      - [16, 10]
+      - [4, 3]
+    dtype: "bfloat16"
+    quantization: null
+    generation:
+      temperature: 0.1
+      min_p: 0.15
+      repetition_penalty: 1.05
+      max_new_tokens: 256
+
+eval:
+  num_scenarios: 10                    # game scenarios to evaluate
+  max_horizon: 30
+  # Frame sweep: test from 1 to max_frames (discovered per model)
+  # Processing time is measured for each frame count
+  frame_sweep_max_attempts: 32         # stop if model can't handle this many frames
+  # Aspect ratio test: evaluate each preferred ratio
+  aspect_ratio_test: true
+
+  # LLM-as-a-judge configuration
+  judge:
+    enabled: false                     # enable with OpenAI API key
+    max_scenarios: 5
+    mode: "openai"                     # only "openai" supported in API-based eval
+    api_model: "gpt-4o"               # or "claude-sonnet-4-20250514", etc.
+    # api_base: null                   # custom endpoint URL (optional)
+    # api_key: null                    # or set OPENAI_API_KEY env var
+
+# API endpoint — override with --api-base CLI flag
+api:
+  base_url: "http://localhost:8000/v1"
+
+environment:
+  fps: 30
+  max_horizon: 30
+  frame_output_size: [512, 512]

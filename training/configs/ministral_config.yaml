@@ -1,0 +1,73 @@
+# =============================================================================
+# Duck Hunt GRPO Training — Ministral-3-8B-Instruct-2512 Overrides
+# =============================================================================
+# Model-specific config. Layered on top of base_config.yaml.
+#
+# Ministral-3-8B: 8.4B LLM + 0.4B vision encoder = ~9B params (BF16)
+# Fits in 24GB VRAM (BF16), <12GB quantised.
+# 256k context window, multimodal (vision + text).
+
+model:
+  model_name: "mistralai/Ministral-3-8B-Instruct-2512-BF16"
+  torch_dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  trust_remote_code: true
+  device_map: "auto"
+  quantization: "4bit"
+
+lora:
+  enabled: true
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+  task_type: "CAUSAL_LM"
+  bias: "none"
+
+grpo:
+  # Fewer generations to fit in memory with vision encoder overhead
+  num_generations: 4
+  max_completion_length: 256
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 0
+  beta: 0.0
+  num_iterations: 1
+  epsilon: 0.2
+  loss_type: "grpo"
+  scale_rewards: "group"
+  entropy_coeff: 0.01
+  use_vllm: false
+
+training:
+  output_dir: "./outputs/ministral_duckhunt_grpo"
+  num_train_epochs: 3
+  max_steps: -1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 5.0e-6
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  lr_scheduler_type: "cosine"
+  max_grad_norm: 1.0
+  bf16: true
+  fp16: false
+  logging_steps: 1
+  save_steps: 100
+  save_total_limit: 3
+  eval_strategy: "no"
+  eval_steps: 100
+  seed: 42
+  dataloader_num_workers: 2
+  gradient_checkpointing: true
+
+logging:
+  wandb_project: "duckhunt-grpo"
+  wandb_run_name: "ministral-3-8b-grpo"
+  report_to: "wandb"
+  log_completions: true
+  num_completions_to_print: 5
