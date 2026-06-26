@@ -6,10 +6,17 @@
 # Usage:
 #   ./serve_vlm.sh                                     # defaults: vLLM, LFM2.5-VL-1.6B
 #   ./serve_vlm.sh --model LiquidAI/LFM2-VL-450M
+#   ./serve_vlm.sh --model google/gemma-3-4b-it        # Gemma 3 (tool_code format)
+#   ./serve_vlm.sh --model OpenGVLab/InternVL3-2B-hf   # InternVL3 (-hf native checkpoint)
 #   ./serve_vlm.sh --backend sglang
 #   ./serve_vlm.sh --backend vllm --quantization awq --gpu-memory 0.8
 #   ./serve_vlm.sh --checkpoint ./outputs/lfm25_grpo/best  # fine-tuned model
 #   ./serve_vlm.sh --stop                              # stop running container
+#
+# Note: serving is model-agnostic — --trust-remote-code is always passed and the
+# container installs a recent transformers. The OpenAI-compatible server applies
+# each model's chat template; eval_vlm.py parses the raw tool-call text via the
+# shared formats registry (no per-model server flag needed for our text parsing).
 
 set -euo pipefail
 

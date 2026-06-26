@@ -315,6 +315,9 @@ Any config value can be overridden from the command line:
 | `configs/liquidai_config.yaml` | LFM2.5-VL-1.6B | Small model, fast iteration |
 | `configs/liquidai_3b_config.yaml` | LFM2-VL-3B | Medium model, better vision |
 | `configs/qwen3_vl_8b_config.yaml` | Qwen3-VL-8B-Instruct | Large model, best spatial understanding |
+| `configs/gemma3_4b_config.yaml` | Gemma-3-4B-it | Smallest multimodal Gemma 3; ` ```tool_code ` format, `eager` attn for vision tower |
+| `configs/internvl3_2b_config.yaml` | InternVL3-2B-hf | Small/fast; Qwen2.5 backbone, `<tool_call>` format (schema injected into prompt) |
+| `configs/ministral_config.yaml` | Ministral-3-8B | Mistral `[TOOL_CALLS]` JSON format |
 | `configs/accelerate_2gpu.yaml` | — | Accelerate config for 2x GPU |
 
 ---

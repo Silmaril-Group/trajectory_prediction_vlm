@@ -1,0 +1,120 @@
+# =============================================================================
+# Duck Hunt GRPO Training — Google Gemma 3 4B (multimodal, LoRA)
+# =============================================================================
+# google/gemma-3-4b-it: ~4.3B params (SigLIP vision + Gemma decoder).
+# Smallest *multimodal* Gemma 3 (the 1B variant is text-only).
+# Loads natively via AutoModelForImageTextToText (Gemma3ForConditionalGeneration);
+# requires transformers >= 4.50. NO trust_remote_code needed.
+# VRAM: bf16 ~12-16GB inference; 4-bit (QLoRA) ~6-8GB.
+#
+# Tool call format: prompt-based ```tool_code``` fenced Python call:
+#     ```tool_code
+#     shoot(x=0.5, y=0.3, horizon=8)
+#     ```
+#
+# NOTE: attn_implementation="eager" — recommended for the SigLIP vision tower
+# (flash-attn over the full stack is finicky on Gemma 3). Use "sdpa" if stable.
+#
+# Usage:
+#   python train.py --config configs/gemma3_4b_config.yaml --custom \
+#       --override training.max_steps=20000 \
+#       --override grpo.curriculum_phase2_step=12000
+
+model:
+  model_name: "google/gemma-3-4b-it"
+  torch_dtype: "bfloat16"
+  attn_implementation: "eager"               # safe for SigLIP vision tower; "sdpa" also works
+  trust_remote_code: false                   # Gemma 3 is native in transformers >= 4.50
+  device_map: "auto"
+  quantization: null                         # set "4bit" for QLoRA (~6-8GB)
+
+lora:
+  enabled: true
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.0
+  target_modules:                            # language decoder only (vision stays frozen)
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  task_type: "CAUSAL_LM"
+  bias: "none"
+
+grpo:
+  num_generations: 6
+  max_completion_length: 50                   # tool_code block is a few tokens longer than bare pythonic
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 0
+  beta: 0.0
+  num_iterations: 1
+  epsilon: 0.2
+  loss_type: "grpo"
+  scale_rewards: "group"
+  entropy_coeff: 0.0                          # temperature handles exploration
+  entropy_floor: 0.0
+  entropy_floor_coeff: 0.0
+  # Curriculum: phase 1 = learn (x,y), phase 2 = learn horizon
+  curriculum_phase2_step: 12000
+  phase1_max_completion_length: 40
+  stabilization_steps: 0
+  stabilization_grad_accum: 8
+  lora_freeze_steps: 0
+  use_vllm: false
+
+training:
+  output_dir: "./outputs/gemma3_4b_duckhunt_grpo"
+  num_train_epochs: 3
+  max_steps: -1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-5
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  lr_scheduler_type: "cosine"
+  max_grad_norm: 1.0
+  bf16: true
+  fp16: false
+  logging_steps: 1
+  save_steps: 500
+  save_total_limit: 3
+  eval_strategy: "no"
+  eval_steps: 100
+  seed: 42
+  dataloader_num_workers: 4
+  gradient_checkpointing: true
+
+environment:
+  # Gemma 3 4B single-generation latency ~0.8-2s on a good GPU; buckets skew high.
+  latency_options_ms: [200, 300, 400, 500, 600]
+  frames_per_observation: 2
+  frames_per_observation_min: 2
+  frames_per_observation_max: 4
+  frame_skip: 6
+
+reward:
+  hit: 1.0
+  double_kill: 2.5
+  miss: -0.1
+  shoot_nothing: -0.5
+  lambda_horizon: 0.1
+  proximity_bonus: 1.0
+  proximity_decay: 3.0
+  edge_bonus: 0.3
+  hitbox_center_bonus: 0.5
+  hotspot_enabled: true
+  skip_invalid_generations: false
+  format_weight: 0.3
+  accuracy_weight: 1.0
+  reward_normalization: "group"
+
+logging:
+  wandb_project: "duckhunt-grpo"
+  wandb_run_name: "gemma3-4b-grpo-v1"
+  report_to: "wandb"
+  log_completions: true
+  num_completions_to_print: 5

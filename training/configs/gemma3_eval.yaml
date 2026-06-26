@@ -1,0 +1,46 @@
+# =============================================================================
+# Duck Hunt Pre/Post-Training Evaluation — Gemma 3 (multimodal)
+# =============================================================================
+# Queries a Gemma 3 VLM served via vLLM/SGLang (OpenAI-compatible API).
+#
+# Usage:
+#   ./serve_vlm.sh --model google/gemma-3-4b-it
+#   python eval_vlm.py --config configs/gemma3_eval.yaml
+
+models:
+  - model_id: "google/gemma-3-4b-it"
+    model_class: "AutoModelForImageTextToText"
+    processor_class: "AutoProcessor"
+    tool_call_format: "gemma"          # ```tool_code\nshoot(...)\n```
+    max_image_tokens: 256              # Gemma encodes each image to 256 tokens
+    min_image_tokens: 256
+    context_length: 32768
+    native_tile_size: 896             # images normalized to 896x896
+    preferred_aspect_ratios:
+      - [1, 1]
+      - [16, 10]
+      - [4, 3]
+    dtype: "bfloat16"
+    quantization: null
+    generation:
+      temperature: 0.1
+      max_new_tokens: 64
+
+eval:
+  num_scenarios: 10
+  max_horizon: 30
+  frame_sweep_max_attempts: 32
+  aspect_ratio_test: true
+  judge:
+    enabled: false
+    max_scenarios: 5
+    mode: "openai"
+    api_model: "gpt-4o"
+
+api:
+  base_url: "http://localhost:8000/v1"
+
+environment:
+  fps: 30
+  max_horizon: 30
+  frame_output_size: [512, 512]

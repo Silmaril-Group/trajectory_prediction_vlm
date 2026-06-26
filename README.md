@@ -16,6 +16,10 @@ Training in progress — experimenting with GRPO on latency-conditioned VLMs.
 |-------|--------|------------------|-------------|
 | [LFM2-VL-3B](https://huggingface.co/LiquidAI/LFM2-VL-3B) | ~3B | `<\|tool_call_start\|>[shoot(...)]<\|tool_call_end\|>` | 16GB |
 | [LFM2.5-VL-1.6B](https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B) | 1.2B LFM + 400M SigLIP2 | `<\|tool_call_start\|>[shoot(...)]<\|tool_call_end\|>` | 8GB |
+| [Ministral-3-8B](https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512-BF16) | 8.4B + Pixtral vision | `[TOOL_CALLS] [{"name":"shoot",...}]` | 24GB |
+| [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) | ~8B | `<tool_call>{"name":"shoot",...}</tool_call>` | ~18GB |
+| [Gemma-3-4B-it](https://huggingface.co/google/gemma-3-4b-it) | ~4.3B | ` ```tool_code ` → `shoot(x=…, y=…, horizon=…)` | ~12-16GB |
+| [InternVL3-2B / -8B](https://huggingface.co/OpenGVLab/InternVL3-2B-hf) | 2.1B / 7.9B | `<tool_call>{"name":"shoot",...}</tool_call>` | ~6 / ~18GB |
 
 The model family is **auto-detected** from the config — one training script handles all models. See [training/README.md](training/README.md) for details.
 

@@ -57,6 +57,7 @@ from src.config import EnvironmentConfig, RewardConfig
 from src.reward import compute_reward
 from src.dataset import simulate_shot, capture_snapshot
 from src.utils import Action, _build_action
+from src.formats import get_format_by_name, get_format
 
 logging.basicConfig(
     level=logging.INFO,
@@ -143,81 +144,28 @@ class ModelEvalResult:
 #  Tool call parsing — model-agnostic
 # ===================================================================
 def parse_tool_call(output_text: str, tool_call_format: str, max_horizon: int = 30) -> Action | None:
-    """Parse a tool call from model output, handling multiple formats."""
+    """Parse a tool call from model output via the shared ``formats`` registry.
 
-    # --- LiquidAI: <|tool_call_start|>[shoot(x=0.3, y=0.2, horizon=5)]<|tool_call_end|> ---
-    liq_match = re.search(
-        r"(?:<\|tool_call_start\|>|tool_call_start)"
-        r".*?shoot\s*\((.*?)\)"
-        r".*?(?:<\|tool_call_end\|>|tool_call_end)?",
-        output_text, re.DOTALL | re.IGNORECASE,
-    )
-    if liq_match:
-        return _parse_kwargs(liq_match.group(1), max_horizon)
-
-    # --- Pythonic: shoot(x=0.3, y=0.2, horizon=5) ---
-    py_match = re.search(
-        r"shoot\s*\((.*?)\)", output_text, re.DOTALL | re.IGNORECASE,
-    )
-    if py_match:
-        return _parse_kwargs(py_match.group(1), max_horizon)
-
-    # --- Mistral: [TOOL_CALLS] [{"name": "shoot", "arguments": {...}}] ---
-    tc_match = re.search(r"\[TOOL_CALLS\]\s*(\[.*\])", output_text, re.DOTALL)
-    if tc_match:
-        try:
-            calls = json.loads(tc_match.group(1))
-            if isinstance(calls, list) and len(calls) > 0:
-                args = calls[0].get("arguments", {})
-                if isinstance(args, str):
-                    args = json.loads(args)
-                if "x" in args and "y" in args:
-                    return _build_action(args["x"], args["y"], args.get("horizon", 0), max_horizon)
-        except (json.JSONDecodeError, KeyError, TypeError):
-            pass
-
-    # --- JSON object with x/y ---
+    ``tool_call_format`` is the registry key from the eval config
+    (e.g. ``"liquidai"``, ``"mistral"``, ``"qwen"``, ``"gemma"``, ``"internvl"``).
+    Dispatching through the registry keeps API-eval parsing identical to training
+    and means any newly-added model format works here automatically. Unknown
+    keys are treated as a HuggingFace model id and auto-detected; failing that,
+    the Mistral format's permissive JSON/kv fallbacks are used.
+    """
     try:
-        start = output_text.index("{")
-        depth, end = 0, start
-        for i, ch in enumerate(output_text[start:], start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-        blob = json.loads(output_text[start:end])
-        if "arguments" in blob and isinstance(blob["arguments"], dict):
-            blob = blob["arguments"]
-        elif "arguments" in blob and isinstance(blob["arguments"], str):
-            blob = json.loads(blob["arguments"])
-        if "x" in blob and "y" in blob:
-            return _build_action(blob["x"], blob["y"], blob.get("horizon", 0), max_horizon)
-    except (ValueError, json.JSONDecodeError, KeyError, TypeError):
-        pass
-
-    # --- key=value fallback ---
-    kv_match = re.search(
-        r"x\s*[=:]\s*([0-9.eE+-]+).*?"
-        r"y\s*[=:]\s*([0-9.eE+-]+).*?"
-        r"horizon\s*[=:]\s*([0-9]+)",
-        output_text, re.DOTALL | re.IGNORECASE,
-    )
-    if kv_match:
-        return _build_action(kv_match.group(1), kv_match.group(2), kv_match.group(3), max_horizon)
-
-    return None
-
-
-def _parse_kwargs(args_str: str, max_horizon: int) -> Action | None:
-    vals = {}
-    for match in re.finditer(r"(\w+)\s*=\s*([0-9.eE+-]+)", args_str):
-        vals[match.group(1)] = match.group(2)
-    if "x" in vals and "y" in vals:
-        return _build_action(vals["x"], vals["y"], vals.get("horizon", "0"), max_horizon)
-    return None
+        fmt = get_format_by_name(tool_call_format)
+    except ValueError:
+        try:
+            fmt = get_format(tool_call_format)  # maybe a model id, not a registry key
+        except ValueError:
+            logger.warning(
+                "Unknown tool_call_format '%s' — falling back to Mistral parser.",
+                tool_call_format,
+            )
+            from src.formats import MistralFormat
+            fmt = MistralFormat()
+    return fmt.parse_tool_call(output_text, max_horizon)
 
 
 def _validate_action_params(action: Action | None) -> bool:

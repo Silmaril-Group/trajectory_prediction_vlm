@@ -8,8 +8,11 @@ Supported model families:
 |-------|--------|------------------|-------------|--------------|
 | [Ministral-3-8B-Instruct-2512](https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512-BF16) | 8.4B LLM + 0.4B Pixtral vision | `[TOOL_CALLS] [{"name":"shoot",...}]` | 24GB | 12GB |
 | [LFM2.5-VL-1.6B](https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B) | 1.2B LFM + 400M SigLIP2 vision | `<\|tool_call_start\|>[shoot(...)]<\|tool_call_end\|>` | 8GB | 4GB |
+| [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) | ~8B | `<tool_call>{"name":"shoot",...}</tool_call>` | ~18GB | ~6GB |
+| [Gemma-3-4B-it](https://huggingface.co/google/gemma-3-4b-it) | ~4.3B (SigLIP + Gemma) | ` ```tool_code ` → `shoot(x=…, y=…, horizon=…)` | ~12-16GB | ~6-8GB |
+| [InternVL3-2B](https://huggingface.co/OpenGVLab/InternVL3-2B-hf) / [-8B](https://huggingface.co/OpenGVLab/InternVL3-8B-hf) | 2.1B / 7.9B (Qwen2.5 backbone) | `<tool_call>{"name":"shoot",...}</tool_call>` | ~6 / ~18GB | ~3 / ~8GB |
 
-The model family is **auto-detected** from the config — one script handles all models.
+The model family is **auto-detected** from the config — one script handles all models. VRAM figures for Gemma/InternVL are estimates; measure on your target GPU to finalize the latency buckets in each config's `environment.latency_options_ms`.
 
 ## Quick Start
 
@@ -78,8 +81,13 @@ training/
 
 - `mistralai/*` → `MistralFormat` (JSON tool calls, `[TOOL_CALLS]` tokens)
 - `LiquidAI/*` or `LFM*` → `LiquidAIFormat` (Pythonic tool calls, `<|tool_call_start|>` tokens)
+- `Qwen/*` → `QwenFormat` (OpenAI-style JSON, `<tool_call>{…}</tool_call>` tags)
+- `google/gemma*` → `GemmaFormat` (prompt-based ` ```tool_code ` fenced Python call)
+- `OpenGVLab/InternVL*` → `InternVLFormat` (Qwen-backbone `<tool_call>` or InternLM `<|action_start|>` action tokens; schema injected into the system prompt)
 
-All downstream code (`dataset.py`, `trainer.py`, `evaluate.py`) uses the active format transparently through `build_prompt()` and `parse_tool_call()` from `src/utils.py`.
+All downstream code (`dataset.py`, `trainer.py`, `evaluate.py`, `eval_vlm.py`) uses the active format transparently through `build_prompt()` and `parse_tool_call()`. The API-based evaluator (`eval_vlm.py`) dispatches through the same registry via `get_format_by_name(tool_call_format)`, so every format parses identically online and offline.
+
+To add a model family: subclass `ModelFormat` in `src/formats.py` (implement `get_tools`, `build_prompt`, `parse_tool_call`), register it in `_FORMATS` and add a name prefix to `_MODEL_PREFIX_MAP`, then add a `configs/<model>_config.yaml`.
 
 ## Training Modes
 

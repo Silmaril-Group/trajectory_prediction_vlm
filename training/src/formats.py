@@ -49,6 +49,31 @@ def _random_fewshot_values() -> tuple[float, float, int]:
     return x, y, horizon
 
 
+def _parse_pythonic_args(args_str: str, max_horizon: int, phase: int = 2) -> Action | None:
+    """Parse the inside of a pythonic call: ``x=0.5, y=0.3, horizon=8`` or ``0.5, 0.3, 8``.
+
+    Shared by the LiquidAI (``shoot(...)``) and Gemma (```` ```tool_code ````
+    ``shoot(...)`` block) formats. In phase 1 the horizon is forced to 0.
+    """
+    # Keyword args first: shoot(x=0.5, y=0.3) / shoot(x=0.5, y=0.3, horizon=8)
+    vals: dict[str, str] = {}
+    for match in re.finditer(r"(\w+)\s*=\s*([0-9.eE+-]+)", args_str):
+        vals[match.group(1)] = match.group(2)
+    if "x" in vals and "y" in vals:
+        horizon = "0" if phase == 1 else vals.get("horizon", "0")
+        return _build_action(vals["x"], vals["y"], horizon, max_horizon)
+
+    # Positional args: shoot(0.5, 0.3) / shoot(0.5, 0.3, 8)
+    nums = re.findall(r"\d+\.?\d*(?:[eE][+-]?\d+)?", args_str)
+    if len(nums) >= 2:
+        horizon = "0" if phase == 1 else (nums[2] if len(nums) >= 3 else "0")
+        try:
+            return _build_action(nums[0], nums[1], horizon, max_horizon)
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
 # ===================================================================
 #  Base class
 # ===================================================================
@@ -379,29 +404,8 @@ class LiquidAIFormat(ModelFormat):
 
     @staticmethod
     def _parse_kwargs(args_str: str, max_horizon: int, phase: int = 2) -> Action | None:
-        # Try keyword args first: shoot(x=0.5, y=0.3) or shoot(x=0.5, y=0.3, horizon=8)
-        vals = {}
-        for match in re.finditer(r"(\w+)\s*=\s*([0-9.eE+-]+)", args_str):
-            vals[match.group(1)] = match.group(2)
-        if "x" in vals and "y" in vals:
-            # Phase 1: ignore any horizon value, always 0
-            horizon = "0" if phase == 1 else vals.get("horizon", "0")
-            return _build_action(vals["x"], vals["y"], horizon, max_horizon)
-
-        # Fallback: positional args: shoot(0.5, 0.3) or shoot(0.5, 0.3, 8)
-        nums = re.findall(r"\d+\.?\d*(?:[eE][+-]?\d+)?", args_str)
-        if len(nums) >= 2:
-            # Phase 1: ignore any horizon value, always 0
-            if phase == 1:
-                horizon = "0"
-            else:
-                horizon = nums[2] if len(nums) >= 3 else "0"
-            try:
-                return _build_action(nums[0], nums[1], horizon, max_horizon)
-            except (ValueError, TypeError):
-                pass
-
-        return None
+        # Pythonic kwargs/positional parsing shared with the Gemma tool_code format.
+        return _parse_pythonic_args(args_str, max_horizon, phase=phase)
 
 
 # ===================================================================
@@ -554,12 +558,188 @@ class QwenFormat(ModelFormat):
 
 
 # ===================================================================
+#  Gemma 3 format
+# ===================================================================
+class GemmaFormat(ModelFormat):
+    """Gemma 3 multimodal: prompt-based ```` ```tool_code ```` Python-call convention.
+
+    Base ``google/gemma-3-*-it`` models are not function-call-tuned and have no
+    tool-call special tokens. The community convention (and what the model emits
+    when instructed) is a fenced ``tool_code`` block containing a Python call::
+
+        ```tool_code
+        shoot(x=0.5, y=0.3, horizon=8)
+        ```
+
+    Loads via ``AutoModelForImageTextToText`` (``Gemma3ForConditionalGeneration``),
+    no ``trust_remote_code``. The args inside the call are parsed with the shared
+    pythonic parser, so this reuses the same value handling as LiquidAI.
+    """
+
+    # Same OpenAI-style schema shape as Qwen — rendered into the prompt by the
+    # Gemma chat template when ``tools=`` is supported, and reinforced by the
+    # system-prompt instruction + few-shot below regardless of template version.
+    TOOL_SCHEMA = QwenFormat.TOOL_SCHEMA
+    TOOL_SCHEMA_PHASE1 = QwenFormat.TOOL_SCHEMA_PHASE1
+
+    _FORMAT_HINT = (
+        "\n\nOutput the tool call as a fenced code block exactly like:\n"
+        "```tool_code\n"
+        "shoot(x=<float>, y=<float>, horizon=<int>)\n"
+        "```\n"
+        "Use only this block — no other text."
+    )
+    _FORMAT_HINT_PHASE1 = (
+        "\n\nOutput the tool call as a fenced code block exactly like:\n"
+        "```tool_code\n"
+        "shoot(x=<float>, y=<float>)\n"
+        "```\n"
+        "Use only this block — no other text."
+    )
+
+    def get_tools(self, phase: int = 2) -> list[dict]:
+        if phase == 1:
+            return [self.TOOL_SCHEMA_PHASE1]
+        return [self.TOOL_SCHEMA]
+
+    def _make_fewshot(self, phase: int = 2) -> str:
+        x, y, h = _random_fewshot_values()
+        if phase == 1:
+            return f"```tool_code\nshoot(x={x}, y={y})\n```"
+        return f"```tool_code\nshoot(x={x}, y={y}, horizon={h})\n```"
+
+    def build_prompt(self, frames, state, num_frames=None, phase: int = 2):
+        if num_frames is None:
+            num_frames = len(frames)
+        latency_frames = state.get("simulated_latency_frames", 6)
+        system_prompt = format_system_prompt(
+            num_frames=num_frames, processing_latency_frames=latency_frames,
+            phase=phase,
+        )
+        system_prompt += self._FORMAT_HINT_PHASE1 if phase == 1 else self._FORMAT_HINT
+        user_content = self._build_user_content(frames, state, latency_frames, num_frames)
+
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
+            {"role": "user", "content": [{"type": "text", "text": (
+                "Frame sequence: 4 frames. Ducks flying: 2. "
+                "Latency: 6 frames. Call the shoot tool now."
+            )}]},
+            {"role": "assistant", "content": [{"type": "text", "text": self._make_fewshot(phase=phase)}]},
+            {"role": "user", "content": user_content},
+        ]
+        return messages, self.get_tools(phase=phase)
+
+    def parse_tool_call(self, output_text, max_horizon=30, phase: int = 2):
+        # --- Gemma ```tool_code\nshoot(...)\n``` block ---
+        block = re.search(
+            r"```(?:tool_code)?\s*\n?(.*?)```", output_text, re.DOTALL | re.IGNORECASE,
+        )
+        if block:
+            inner = block.group(1)
+            call = re.search(r"shoot\s*\((.*?)\)", inner, re.DOTALL | re.IGNORECASE)
+            if call:
+                action = _parse_pythonic_args(call.group(1), max_horizon, phase=phase)
+                if action:
+                    return action
+
+        # --- Plain pythonic shoot(...) without the fence ---
+        py_match = re.search(r"shoot\s*\((.*?)\)", output_text, re.DOTALL | re.IGNORECASE)
+        if py_match:
+            action = _parse_pythonic_args(py_match.group(1), max_horizon, phase=phase)
+            if action:
+                return action
+
+        logger.warning("Failed to parse Gemma tool call from: %s", output_text[:200])
+        return None
+
+
+# ===================================================================
+#  InternVL format
+# ===================================================================
+class InternVLFormat(QwenFormat):
+    """InternVL3 / InternVL2.5: tool-call format follows the LLM backbone.
+
+    The InternVL chat template (ChatML) has *no* native tool handling and
+    ``apply_chat_template(tools=…)`` is silently ignored, so the tool schema is
+    injected into the system prompt here. Output formats by backbone:
+
+      * Qwen2.5 backbone (InternVL3-1B/2B/8B, InternVL2.5-1B/4B) — Hermes style::
+
+            <tool_call>{"name": "shoot", "arguments": {...}}</tool_call>
+
+      * InternLM2.5 backbone (InternVL2.5-2B/8B) — action/plugin tokens::
+
+            <|action_start|><|plugin|>{"name": "shoot", "parameters": {...}}<|action_end|>
+
+    The small variants you train are Qwen-backed, so the dataset standardizes on
+    ``<tool_call>``. This class inherits Qwen's parser (which handles
+    ``<tool_call>`` + JSON/kv fallbacks) and prepends the InternLM action-token
+    branch for the InternLM-backed checkpoints.
+    """
+
+    def build_prompt(self, frames, state, num_frames=None, phase: int = 2):
+        # InternVL templates ignore tools=, so inject the schema into the system text.
+        if num_frames is None:
+            num_frames = len(frames)
+        latency_frames = state.get("simulated_latency_frames", 6)
+        system_prompt = format_system_prompt(
+            num_frames=num_frames, processing_latency_frames=latency_frames,
+            phase=phase,
+        )
+        tools = self.get_tools(phase=phase)
+        system_prompt += (
+            "\n\nYou have one tool:\n"
+            f"{json.dumps(tools)}\n"
+            "To call it, output exactly:\n"
+            '<tool_call>{"name": "shoot", "arguments": <json args>}</tool_call>'
+        )
+        user_content = self._build_user_content(frames, state, latency_frames, num_frames)
+
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
+            {"role": "user", "content": [{"type": "text", "text": (
+                "Frame sequence: 4 frames. Ducks flying: 2. "
+                "Latency: 6 frames. Call the shoot tool now."
+            )}]},
+            {"role": "assistant", "content": [{"type": "text", "text": self._make_fewshot(phase=phase)}]},
+            {"role": "user", "content": user_content},
+        ]
+        # Note: tools intentionally not passed downstream — the template ignores them.
+        return messages, tools
+
+    def parse_tool_call(self, output_text, max_horizon=30, phase: int = 2):
+        # --- InternLM2.5 backbone: <|action_start|><|plugin|>{...}<|action_end|> ---
+        act = re.search(
+            r"<\|action_start\|>\s*<\|plugin\|>\s*(\{.*?\})\s*<\|action_end\|>",
+            output_text, re.DOTALL,
+        )
+        if act:
+            try:
+                call = json.loads(act.group(1))
+                # InternLM uses "parameters"; tolerate "arguments" too.
+                args = call.get("parameters", call.get("arguments", {}))
+                if isinstance(args, str):
+                    args = json.loads(args)
+                if "x" in args and "y" in args:
+                    horizon = "0" if phase == 1 else args.get("horizon", "0")
+                    return _build_action(args["x"], args["y"], horizon, max_horizon)
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
+        # --- Qwen backbone (<tool_call>{...}</tool_call>) + shared fallbacks ---
+        return super().parse_tool_call(output_text, max_horizon, phase=phase)
+
+
+# ===================================================================
 #  Registry / factory
 # ===================================================================
 _FORMATS: dict[str, type[ModelFormat]] = {
     "mistral": MistralFormat,
     "liquidai": LiquidAIFormat,
     "qwen": QwenFormat,
+    "gemma": GemmaFormat,
+    "internvl": InternVLFormat,
 }
 
 # Model name prefixes → format key
@@ -568,6 +748,10 @@ _MODEL_PREFIX_MAP: list[tuple[str, str]] = [
     ("liquidai/", "liquidai"),
     ("lfm", "liquidai"),
     ("qwen/", "qwen"),
+    ("google/gemma", "gemma"),
+    ("gemma", "gemma"),
+    ("opengvlab/internvl", "internvl"),
+    ("internvl", "internvl"),
 ]
 
 
